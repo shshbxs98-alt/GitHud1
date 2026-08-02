@@ -1,0 +1,380 @@
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local Lighting = game:GetService("Lighting")
+local UserInputService = game:GetService("UserInputService")
+
+local LocalPlayer = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
+
+-- ดึง PlayerGui แบบปลอดภัย ไม่ค้างแน่นอน
+local playerGui = LocalPlayer:FindFirstChildOfClass("PlayerGui") or LocalPlayer:WaitForChild("PlayerGui")
+
+-- ลบ UI เก่าออกก่อนป้องกันการรันซ้ำแล้วตีกัน
+if playerGui:FindFirstChild("CustomRainbowMenu") then
+	playerGui.CustomRainbowMenu:Destroy()
+end
+
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "CustomRainbowMenu"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.Parent = playerGui
+
+local ActiveRainbowButtons = {} -- ตารางเก็บปุ่มที่เปิดใช้งาน (สีสายรุ้งเต็มช่อง)
+local RainbowBorders = {}       -- ตารางเก็บเส้นขอบสายรุ้ง
+
+-- 1. ปุ่มไอคอนย่อ (เปิด-ปิดเมนู)
+local MiniIconButton = Instance.new("TextButton")
+MiniIconButton.Size = UDim2.new(0, 50, 0, 50)
+MiniIconButton.Position = UDim2.new(0.05, 0, 0.4, 0)
+MiniIconButton.Text = "MENU"
+MiniIconButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+MiniIconButton.Font = Enum.Font.SourceSansBold
+MiniIconButton.TextSize = 14
+MiniIconButton.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+MiniIconButton.Active = true
+MiniIconButton.Draggable = true
+MiniIconButton.ZIndex = 10
+MiniIconButton.Parent = ScreenGui
+
+Instance.new("UICorner", MiniIconButton).CornerRadius = UDim.new(0, 10)
+local BStroke = Instance.new("UIStroke")
+BStroke.Thickness = 2
+BStroke.Parent = MiniIconButton
+table.insert(RainbowBorders, BStroke)
+
+-- 2. หน้าจอหลัก (Main Panel)
+local MainFrame = Instance.new("Frame")
+MainFrame.Size = UDim2.new(0, 340, 0, 480)
+MainFrame.Position = UDim2.new(0.5, -170, 0.5, -240)
+MainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+MainFrame.Active = true
+MainFrame.Draggable = true
+MainFrame.Visible = false
+MainFrame.ZIndex = 1
+MainFrame.Parent = ScreenGui
+
+Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 12)
+local MStroke = Instance.new("UIStroke")
+MStroke.Thickness = 3
+MStroke.Parent = MainFrame
+table.insert(RainbowBorders, MStroke)
+
+-- ปุ่มปิด (X)
+local CloseButton = Instance.new("TextButton")
+CloseButton.Size = UDim2.new(0, 30, 0, 30)
+CloseButton.Position = UDim2.new(1, -35, 0, 5)
+CloseButton.Text = "X"
+CloseButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+CloseButton.BackgroundColor3 = Color3.fromRGB(220, 40, 40)
+CloseButton.Font = Enum.Font.SourceSansBold
+CloseButton.TextSize = 18
+CloseButton.ZIndex = 5
+CloseButton.Parent = MainFrame
+Instance.new("UICorner", CloseButton).CornerRadius = UDim.new(0, 6)
+
+-- ScrollingFrame
+local ScrollFrame = Instance.new("ScrollingFrame")
+ScrollFrame.Size = UDim2.new(0.9, 0, 0.85, 0)
+ScrollFrame.Position = UDim2.new(0.05, 0, 0.1, 0)
+ScrollFrame.BackgroundTransparency = 1
+ScrollFrame.CanvasSize = UDim2.new(0, 0, 0, 450)
+ScrollFrame.ScrollBarThickness = 6
+ScrollFrame.ZIndex = 2
+ScrollFrame.Parent = MainFrame
+
+local UIListLayout = Instance.new("UIListLayout")
+UIListLayout.Padding = UDim.new(0, 8)
+UIListLayout.Parent = ScrollFrame
+
+-- Config ค่าการทำงาน
+local Config = {
+	Brightness = false,
+	Speed = false,
+	SpeedValue = 16,
+	Aimbot = false,
+	AimTarget = "Head", -- "Head" หรือ "Torso"
+	ESP = false,
+	ESPColor = Color3.fromRGB(255, 0, 0)
+}
+
+local OrigBrightness = Lighting.Brightness
+local OrigClockTime = Lighting.ClockTime
+local OrigAmbient = Lighting.Ambient
+local OrigOutdoorAmbient = Lighting.OutdoorAmbient
+local OrigGlobalShadows = Lighting.GlobalShadows
+
+-- ฟังก์ชันสร้างปุ่มเปิด/ปิด (เมื่อเปิดจะเป็นสีสายรุ้งเต็มช่อง)
+local function CreateToggle(text, callback)
+	local btn = Instance.new("TextButton")
+	btn.Size = UDim2.new(1, -10, 0, 40)
+	btn.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+	btn.Text = text .. ": OFF"
+	btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+	btn.Font = Enum.Font.SourceSansBold
+	btn.TextSize = 16
+	btn.ZIndex = 3
+	btn.Parent = ScrollFrame
+
+	Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
+
+	local state = false
+	btn.MouseButton1Click:Connect(function()
+		state = not state
+		btn.Text = text .. (state and ": ON" or ": OFF")
+		
+		if state then
+			btn.TextColor3 = Color3.fromRGB(0, 0, 0) -- ตัวหนังสือสีดำเพื่อให้เห็นชัดบนสีรุ้ง
+			ActiveRainbowButtons[btn] = true
+		else
+			btn.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+			btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+			ActiveRainbowButtons[btn] = nil
+		end
+		
+		callback(state)
+	end)
+end
+
+-- 1. เพิ่มความสว่าง
+CreateToggle("1. สว่าง (Fullbright)", function(v)
+	Config.Brightness = v
+	if not v then
+		Lighting.Brightness = OrigBrightness
+		Lighting.ClockTime = OrigClockTime
+		Lighting.Ambient = OrigAmbient
+		Lighting.OutdoorAmbient = OrigOutdoorAmbient
+		Lighting.GlobalShadows = OrigGlobalShadows
+	end
+end)
+
+-- 2. วิ่งไว
+CreateToggle("2. เปิดใช้งานวิ่งไว", function(v)
+	Config.Speed = v
+	if not v and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid") then
+		LocalPlayer.Character.Humanoid.WalkSpeed = 16
+	end
+end)
+
+-- ช่องปรับค่าความเร็ว
+local SpeedFrame = Instance.new("Frame")
+SpeedFrame.Size = UDim2.new(1, -10, 0, 35)
+SpeedFrame.BackgroundTransparency = 1
+SpeedFrame.ZIndex = 3
+SpeedFrame.Parent = ScrollFrame
+
+local SpeedLabel = Instance.new("TextLabel")
+SpeedLabel.Size = UDim2.new(0.5, 0, 1, 0)
+SpeedLabel.Text = "ความเร็ว (1-10000):"
+SpeedLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+SpeedLabel.BackgroundTransparency = 1
+SpeedLabel.Font = Enum.Font.SourceSansBold
+SpeedLabel.TextSize = 14
+SpeedLabel.ZIndex = 3
+SpeedLabel.Parent = SpeedFrame
+
+local SpeedInput = Instance.new("TextBox")
+SpeedInput.Size = UDim2.new(0.45, 0, 1, 0)
+SpeedInput.Position = UDim2.new(0.52, 0, 0, 0)
+SpeedInput.Text = "16"
+SpeedInput.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+SpeedInput.TextColor3 = Color3.fromRGB(255, 255, 255)
+SpeedInput.Font = Enum.Font.SourceSansBold
+SpeedInput.TextSize = 14
+SpeedInput.ZIndex = 3
+SpeedInput.Parent = SpeedFrame
+Instance.new("UICorner", SpeedInput).CornerRadius = UDim.new(0, 6)
+
+SpeedInput.FocusLost:Connect(function()
+	local n = tonumber(SpeedInput.Text)
+	if n then
+		Config.SpeedValue = math.clamp(n, 1, 10000)
+	end
+	SpeedInput.Text = tostring(Config.SpeedValue)
+end)
+
+-- 3. ล็อคเป้า (Aimbot)
+CreateToggle("3. ล็อคเป้า (Aimbot)", function(v)
+	Config.Aimbot = v
+end)
+
+-- ปุ่มสลับเลือกล็อก Head / Torso
+local TargetFrame = Instance.new("Frame")
+TargetFrame.Size = UDim2.new(1, -10, 0, 35)
+TargetFrame.BackgroundTransparency = 1
+TargetFrame.ZIndex = 3
+TargetFrame.Parent = ScrollFrame
+
+local TargetLabel = Instance.new("TextLabel")
+TargetLabel.Size = UDim2.new(0.4, 0, 1, 0)
+TargetLabel.Text = "ตำแหน่งที่ล็อก:"
+TargetLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+TargetLabel.BackgroundTransparency = 1
+TargetLabel.Font = Enum.Font.SourceSansBold
+TargetLabel.TextSize = 14
+TargetLabel.ZIndex = 3
+TargetLabel.Parent = TargetFrame
+
+local TargetBtn = Instance.new("TextButton")
+TargetBtn.Size = UDim2.new(0.55, 0, 1, 0)
+TargetBtn.Position = UDim2.new(0.42, 0, 0, 0)
+TargetBtn.Text = "ส่วนหัว (Head)"
+TargetBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+TargetBtn.TextColor3 = Color3.fromRGB(100, 200, 255)
+TargetBtn.Font = Enum.Font.SourceSansBold
+TargetBtn.TextSize = 14
+TargetBtn.ZIndex = 3
+TargetBtn.Parent = TargetFrame
+Instance.new("UICorner", TargetBtn).CornerRadius = UDim.new(0, 6)
+
+TargetBtn.MouseButton1Click:Connect(function()
+	if Config.AimTarget == "Head" then
+		Config.AimTarget = "Torso"
+		TargetBtn.Text = "ลำตัว (Torso)"
+		TargetBtn.TextColor3 = Color3.fromRGB(255, 200, 100)
+	else
+		Config.AimTarget = "Head"
+		TargetBtn.Text = "ส่วนหัว (Head)"
+		TargetBtn.TextColor3 = Color3.fromRGB(100, 200, 255)
+	end
+end)
+
+-- 4. มองทะลุ (ESP)
+CreateToggle("4. มองทะลุ (ESP)", function(v)
+	Config.ESP = v
+end)
+
+-- เลือกสี ESP
+local ColorFrame = Instance.new("Frame")
+ColorFrame.Size = UDim2.new(1, -10, 0, 40)
+ColorFrame.BackgroundTransparency = 1
+ColorFrame.ZIndex = 3
+ColorFrame.Parent = ScrollFrame
+
+local ColorLabel = Instance.new("TextLabel")
+ColorLabel.Size = UDim2.new(0.35, 0, 1, 0)
+ColorLabel.Text = "เลือกสี ESP:"
+ColorLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+ColorLabel.BackgroundTransparency = 1
+ColorLabel.Font = Enum.Font.SourceSansBold
+ColorLabel.TextSize = 14
+ColorLabel.ZIndex = 3
+ColorLabel.Parent = ColorFrame
+
+local colorsList = {
+	Color3.fromRGB(255, 0, 0),
+	Color3.fromRGB(0, 255, 0),
+	Color3.fromRGB(0, 150, 255),
+	Color3.fromRGB(255, 255, 0)
+}
+
+for i, colorVal in ipairs(colorsList) do
+	local cb = Instance.new("TextButton")
+	cb.Size = UDim2.new(0.15, 0, 0.8, 0)
+	cb.Position = UDim2.new(0.35 + (i - 1) * 0.16, 0, 0.1, 0)
+	cb.BackgroundColor3 = colorVal
+	cb.Text = ""
+	cb.ZIndex = 4
+	cb.Parent = ColorFrame
+	Instance.new("UICorner", cb).CornerRadius = UDim.new(0, 4)
+
+	cb.MouseButton1Click:Connect(function()
+		Config.ESPColor = colorVal
+	end)
+end
+
+-- สลับเปิด/ปิด หน้าจอ
+MiniIconButton.MouseButton1Click:Connect(function()
+	MiniIconButton.Visible = false
+	MainFrame.Visible = true
+end)
+
+CloseButton.MouseButton1Click:Connect(function()
+	MainFrame.Visible = false
+	MiniIconButton.Visible = true
+end)
+
+-- Loop การทำงานระบบ
+RunService.RenderStepped:Connect(function()
+	-- 🌈 เปลี่ยนสีสายรุ้ง
+	local hue = (tick() % 3) / 3
+	local rainbowColor = Color3.fromHSV(hue, 0.8, 1)
+
+	-- ปุ่มไหนที่ ON ให้เปลี่ยนสีพื้นหลังเป็นสายรุ้งเต็มช่อง
+	for btn, _ in pairs(ActiveRainbowButtons) do
+		if btn and btn.Parent then
+			btn.BackgroundColor3 = rainbowColor
+		end
+	end
+
+	-- เปลี่ยนสีขอบ UI เป็นสายรุ้ง
+	for _, borderObj in ipairs(RainbowBorders) do
+		if borderObj and borderObj.Parent then
+			borderObj.Color = rainbowColor
+		end
+	end
+
+	-- 1. Fullbright
+	if Config.Brightness then
+		Lighting.Brightness = 3
+		Lighting.ClockTime = 14
+		Lighting.Ambient = Color3.fromRGB(255, 255, 255)
+		Lighting.OutdoorAmbient = Color3.fromRGB(255, 255, 255)
+		Lighting.GlobalShadows = false
+	end
+
+	-- 2. Speed
+	if Config.Speed and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid") then
+		LocalPlayer.Character.Humanoid.WalkSpeed = Config.SpeedValue
+	end
+
+	-- 3. Aimbot (ล็อกหัว หรือ ล็อกตัว)
+	if Config.Aimbot then
+		local target = nil
+		local shortestDist = math.huge
+		for _, plr in pairs(Players:GetPlayers()) do
+			if plr ~= LocalPlayer and plr.Character and plr.Character:FindFirstChild("HumanoidRootPart") then
+				local hum = plr.Character:FindFirstChild("Humanoid")
+				if hum and hum.Health > 0 then
+					local pos, onScreen = Camera:WorldToViewportPoint(plr.Character.HumanoidRootPart.Position)
+					if onScreen then
+						local mousePos = UserInputService:GetMouseLocation()
+						local dist = (Vector2.new(pos.X, pos.Y) - mousePos).Magnitude
+						if dist < shortestDist then
+							shortestDist = dist
+							target = plr
+						end
+					end
+				end
+			end
+		end
+
+		if target and target.Character then
+			local aimPartName = (Config.AimTarget == "Head") and "Head" or "HumanoidRootPart"
+			local aimPart = target.Character:FindFirstChild(aimPartName)
+			if aimPart then
+				Camera.CFrame = CFrame.new(Camera.CFrame.Position, aimPart.Position)
+			end
+		end
+	end
+
+	-- 4. ESP
+	for _, plr in pairs(Players:GetPlayers()) do
+		if plr ~= LocalPlayer and plr.Character then
+			local highlight = plr.Character:FindFirstChild("ESPHighlight")
+			if Config.ESP then
+				if not highlight then
+					highlight = Instance.new("Highlight")
+					highlight.Name = "ESPHighlight"
+					highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+					highlight.Parent = plr.Character
+				end
+				highlight.FillColor = Config.ESPColor
+				highlight.Enabled = true
+			else
+				if highlight then
+					highlight.Enabled = false
+				end
+			end
+		end
+	end
+end)
